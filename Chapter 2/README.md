@@ -153,7 +153,7 @@ Repository에 메소드 생성 -> 코드에 사용<br/><br/>
     ```
     <br/><br/>
     
-*Querydsl : JPQL을 코드로 작성할 수 있도록 도와주는 빌더 API 
+* Querydsl : JPQL을 코드로 작성할 수 있도록 도와주는 빌더 API 
   * 장점
     * 고정된 SQL문이 아닌 조건에 맞게 동적으로 쿼리 생성
     * 비슷한 쿼리 재사용 가능, 제약 조건 조립 및 가독성 향상
@@ -198,10 +198,109 @@ Repository에 메소드 생성 -> 코드에 사용<br/><br/>
     </plugin>
 
     ```
-    (교재와 변경점 : 버전 변경, querydsl-core 추가, jakarta로 분류 명시)
+    (교재와 변경점 : 버전 변경, querydsl-core 추가, jakarta로 분류 명시)<br/><br/>
+    -> Querydsl 사용을 위한 의존성 추기, Qdomain(엔티티를 기반으로 Q가 붙는 클래스 생성) 플러그인 생성 
+    
+    * 영속성 컨텍스트를 사용하기 위해선 EntityManager Bean 주입 필요 -> @PersistenceContext 어노테이션<br/>
+    ```
+    @PersistenceContext
+    ItemRepository itemRepository
+    ```
+    <br/><br/>
+    
+    ex)
+    ```
+    @Test
+    @DisplayName("Querydsl 조회 테스트 1")
+    public void queryDslTest(){
+        this.createItemList();
+        JPAQueryFactory queryFactory = new JPAQueryFactory(em);
+        QItem qItem = QItem.item;
+        JPAQuery<Item> query = queryFactory.selectFrom(qItem)
+                .where(qItem.itemSellStatus.eq(ItemSellStatus.SELL))
+                .where(qItem.itemDetail.like("%" + "테스트 상품 상세 설명" + "%"))
+                .orderBy(qItem.price.desc());
+        List<Item> itemList = query.fetch();
 
+        for(Item item : itemList){
+            System.out.println(item);
+        }
+     }
+    ```
+      * JPAQueryFactory queryFactory = new JPAQueryFactory(em); : 쿼리 동적 생성
+      * JPAQuery<Item> query = queryFactory.selectFrom(qItem) : 쿼리를 qItem 에서 선택
+      * .where(qItem.itemSellStatus.eq(ItemSellStatus.SELL)) : qItem의 itemSellStatus가 SELL
+      * .where(qItem.itemDetail.like("%" + "테스트 상품 상세 설명" + "%")) : qItem의 itemDetail이 "테스트 상품 상세 설명" 을 포함
+      * .orderBy(qItem.price.desc()); : qItem의 price를 기준으로 내림차순
+      * List<Item> itemList = query.fetch(); : 쿼리 결과를 List로 반환<br/><br/>
+      
+      * JPAQuery 메소드
+        * List<T> fetch() : 조회 결과 리스트 반환
+        * T fetchOne : 조회 대상이 1건인 경우 제네릭으로 타입 변환
+        * T fetchFirst : 조회 대상 중 1건만 반환
+        * Long fetchCount() : 조회 대상 개수 반환
+        * QueryResult<T> fetchResults : 조회한 리스트와 전체 개수를 포함한 QueryResult 반환
+        <br/><br/>
 
+ * QuerydslPredicateExecutor 사용 : Predicate : 이 조건이 맞다 라고 판단하는 근거를 함수로 제공<br/>
+   -> Predicate를 파라미터로 전달하기 위해 QuerydslPredicateExecutor 인터페이스 상속
+   ```
+   public interface ItemRepository extends JpaRepository<Item, Long>,
+   QuerydslPredicateExecutor<Item> {
+  
+   }
+   ```
+   * QuerydslPredicateExecutor 인터페이스 메소드
+      * long count(Predicate) : 조건에 맞는 데이터 총 개수 반환
+      * boolean exists(Predicate) : 조건에 맞는 데이터 존재 여부 반환
+      * Interable findAll(Predicate) : 조건에 맞는 모든 데이터 반환
+      * Page<T> findAll(Predicate, Pageable) : 조건에 맞는 페이지 데이터 반환
+      * Iterable findAll(Predicate, sort) : 조건에 맞는 정렬된 데이터 반환
+      * T findOne(Predicate) : 조건에 맞는 데이터 1개 반환
+    <br/><br/>
 
+    ex)
+    ```
+    @Test
+    @DisplayName("상품 Querydsl 조회 테스트 2")
+    public void queryDslTest2(){
+        this.createItemList2();
+
+        BooleanBuilder booleanBuilder = new BooleanBuilder();
+        QItem item = QItem.item;
+
+        String itemDetail = "테스트 상품 상세 설명";
+        int price = 10003;
+        String itemSellStat = "SELL";
+
+        booleanBuilder.and(item.itemDetail.like("%" + itemDetail + "%"));
+        booleanBuilder.and(item.price.gt(price));
+
+        if(StringUtils.equals(itemSellStat, ItemSellStatus.SELL)){
+            booleanBuilder.and(item.itemSellStatus.eq(ItemSellStatus.SELL));
+        }
+
+        Pageable pageable = PageRequest.of(0, 5);
+        Page<Item> itemPagingResult = itemRepository.findAll(booleanBuilder, pageable);
+        System.out.println("total elements : " + itemPagingResult.getTotalElements());
+
+        List<Item> resultItemList = itemPagingResult.getContent();
+        for(Item resultItem : resultItemList){
+            System.out.println(resultItem);
+        }
+    }
+    ```
+      * BooleanBuilder booleanBuilder = new BooleanBuilder(); : 쿼리에 들어갈 조건을 만들어주는 빌더
+      * booleanBuilder.and(item.itemDetail.like("%" + itemDetail + "%")); : 빌더에 동적으로 조건 추가
+      * Pageable pageable = PageRequest.of(0, 5); : 데이터를 페이징하는 정보를 pageable에 저장 (데이터 추출 X)</br>
+        -> 데이터를 5개씩 페이지로 나눈 후 0번째 페이지 조회
+      * Page<Item> itemPagingResult = itemRepository.findAll(booleanBuilder, pageable); : 조건에 맞는 데이터 추출</br>
+        -> booleanBuilder 조건에 맞는 데이터를 pageable 페이징 정보에 따라 추출
+    
+
+    
+
+    
 
 
 
